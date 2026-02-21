@@ -120,7 +120,7 @@ async function callMiniMax(messages: LLMMessage[]): Promise<string> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "MiniMax-M1-80k",
+        model: "M2-her",
         messages: messages.map((m) => ({
           role: m.role,
           name: m.role === "assistant" ? "MiniMax AI" : "User",
