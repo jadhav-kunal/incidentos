@@ -110,12 +110,9 @@ const DEMO_RESPONSES: Record<string, string> = {
   }),
 };
 
-async function callMiniMax(
-  messages: LLMMessage[],
-  responseType: string
-): Promise<string> {
+async function callMiniMax(messages: LLMMessage[]): Promise<string> {
   const response = await fetch(
-    `https://api.minimaxi.chat/v1/text/chatcompletion_v2`,
+    "https://api.minimax.io/v1/text/chatcompletion_v2",
     {
       method: "POST",
       headers: {
@@ -124,18 +121,34 @@ async function callMiniMax(
       },
       body: JSON.stringify({
         model: "MiniMax-M1-80k",
-        messages,
+        messages: messages.map((m) => ({
+          role: m.role,
+          name: m.role === "assistant" ? "MiniMax AI" : "User",
+          content: m.content,
+        })),
         temperature: 0.3,
-        max_tokens: 2000,
+        max_completion_tokens: 2000,
       }),
     }
   );
 
+  const text = await response.text();
+  console.log(`[MiniMax] Status: ${response.status} | Preview: ${text.slice(0, 400)}`);
+
   if (!response.ok) {
-    throw new Error(`MiniMax API error: ${response.status}`);
+    throw new Error(`MiniMax error ${response.status}: ${text}`);
   }
 
-  const data = await response.json() as { choices: Array<{ message: { content: string } }> };
+  const data = JSON.parse(text) as {
+    choices: Array<{ message: { content: string } }>;
+    base_resp?: { status_code: number; status_msg: string };
+  };
+
+  // Check MiniMax internal error codes
+  if (data.base_resp?.status_code && data.base_resp.status_code !== 0) {
+    throw new Error(`MiniMax internal error: ${data.base_resp.status_msg}`);
+  }
+
   return data.choices[0].message.content;
 }
 
@@ -155,7 +168,7 @@ export async function callLLM(
 
   try {
     logger.info(`Calling MiniMax LLM for ${responseType}`);
-    const content = await callMiniMax(messages, responseType);
+    const content = await callMiniMax(messages);
     return { content, model: "MiniMax-M1-80k", demo: false };
   } catch (err) {
     logger.warn("MiniMax failed, falling back to demo mode", err);

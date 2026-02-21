@@ -21,7 +21,7 @@ export const hypothesisEngine = {
       "hypothesis"
     );
 
-    let hypotheses = parseHypotheses(response.content);
+    let hypotheses = parseHypotheses(response.content, context);
 
     // Apply rule-based confidence scoring on top of LLM scores
     hypotheses = hypotheses.map((h, i) => ({
@@ -48,21 +48,54 @@ INCIDENT CONTEXT:
 Generate 3 hypotheses as JSON array.`;
 }
 
-function parseHypotheses(content: string): any[] {
+function parseHypotheses(content: string, context: NormalizedContext): any[] {
   try {
     const cleaned = content.replace(/```json|```/g, "").trim();
-    const parsed = JSON.parse(cleaned);
-    return parsed.hypotheses || parsed;
+    
+    // Try finding JSON array or object in response
+    const jsonMatch = cleaned.match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+    if (jsonMatch) {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return parsed.hypotheses || parsed;
+    }
+    throw new Error("No JSON found");
   } catch {
-    // Return structured fallback if parse fails
+    // Dynamic fallback based on actual anomalies
+    const topAnomaly = context.anomalies[0];
+    const topComm = context.communications[0]?.message || "";
+    const deployment = context.deployments[0];
+
     return [
       {
-        title: "Redis Connection Pool Exhaustion",
-        description: "Connection pool saturated after recent deployment",
-        confidence: 0.72,
+        title: `${topAnomaly?.metric || "Service"} Anomaly — Primary Suspect`,
+        description: `Detected ${topAnomaly?.metric} at ${topAnomaly?.value} (${topAnomaly?.severity} severity). ${deployment ? `Recent deployment ${deployment.version} may be related.` : ""}`,
+        confidence: 0.70,
         category: "infrastructure",
-        supportingEvidence: ["Redis latency spike", "Deployment 5min before errors"],
-        affectedServices: ["api-gateway", "redis-primary"],
+        supportingEvidence: [
+          ...context.anomalies.map((a) => `${a.metric}: ${a.value} (${a.severity})`),
+          topComm,
+        ].filter(Boolean),
+        affectedServices: [...new Set(context.events.map((e) => e.service))],
+      },
+      {
+        title: deployment ? `Deployment ${deployment.version} Side Effect` : "Configuration Drift",
+        description: deployment
+          ? `${deployment.version} deployed recently. May have introduced the anomaly.`
+          : "Configuration change may have caused service degradation.",
+        confidence: 0.20,
+        category: "deployment",
+        supportingEvidence: deployment
+          ? [`${deployment.version} deployed at ${deployment.timestamp}`]
+          : ["No recent deployment detected"],
+        affectedServices: [deployment?.service || "unknown"],
+      },
+      {
+        title: "Upstream Dependency Failure",
+        description: "External service degradation cascading into internal errors.",
+        confidence: 0.10,
+        category: "external-dependency",
+        supportingEvidence: ["CPU and memory within normal range"],
+        affectedServices: ["external-api"],
       },
     ];
   }
