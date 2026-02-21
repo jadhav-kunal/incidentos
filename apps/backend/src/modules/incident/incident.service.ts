@@ -45,63 +45,56 @@ export const incidentService = {
     logger.info(`Input added to incident ${id}: ${type}`);
   },
 
-  async runAnalysisPipeline(id: string) {
+  async runAnalysisPipeline(id: string, forceDemo = false) {
     const incident = store.get(id);
     if (!incident) throw new Error(`Incident ${id} not found`);
-
+  
+    // Temporarily override demo mode for simulation
+    const originalDemoMode = process.env.DEMO_MODE;
+    if (forceDemo) process.env.DEMO_MODE = "true";
+  
     try {
-      logger.info(`[Pipeline] Starting for incident ${id}`);
+      logger.info(`[Pipeline] Starting for incident ${id} ${forceDemo ? "(DEMO)" : "(LIVE)"}`);
       incident.status = "processing";
       store.set(id, incident);
-
-      const inputs: RawInput[] = incident.inputs || [];
-
-      // Stage 1: Normalize all inputs
-      logger.info("[Pipeline] Stage 1: Ingestion + Normalization");
-      const context: NormalizedContext = await ingestionService.normalize(inputs);
+  
+      const inputs = incident.inputs || [];
+      const context = await ingestionService.normalize(inputs);
       incident.context = context;
-
-      // Stage 2: Build context graph
-      logger.info("[Pipeline] Stage 2: Context Graph Builder");
+  
       const graph = await contextBuilder.build(context);
       incident.graph = graph;
-
-      // Stage 3: Generate + rank hypotheses
-      logger.info("[Pipeline] Stage 3: Hypothesis Engine");
+  
       const hypotheses = await hypothesisEngine.generate(context, graph);
       incident.hypotheses = hypotheses;
-
-      // Stage 4: Mitigation plan for top hypothesis
-      logger.info("[Pipeline] Stage 4: Mitigation Planner");
+  
       const plan = await mitigationPlanner.plan(hypotheses[0], context);
       incident.mitigationPlan = plan;
-
-      // Stage 5: Generate summaries + audio
-      logger.info("[Pipeline] Stage 5: Summary Generator");
-      const summary = await summaryGenerator.generate(
-        hypotheses,
-        plan,
-        context,
-        id
-      );
+  
+      const summary = await summaryGenerator.generate(hypotheses, plan, context, id);
       incident.summary = summary;
-
+  
       incident.status = "completed";
       incident.completedAt = new Date().toISOString();
       incident.overallConfidence = hypotheses[0]?.confidence || 0;
       store.set(id, incident);
-
+  
       logger.success(`[Pipeline] Completed for incident ${id}`);
     } catch (err) {
       logger.error(`[Pipeline] Failed for incident ${id}`, err);
       incident.status = "failed";
       store.set(id, incident);
       throw err;
+    } finally {
+      // Always restore original demo mode
+      if (forceDemo) process.env.DEMO_MODE = originalDemoMode || "false";
     }
   },
 
   async runSimulation(id: string) {
     logger.demo(`Loading simulation dataset for incident ${id}`);
+
+    process.env.FORCE_DEMO_MODE = "true";
 
     // Preload demo dataset
     await this.addInput(id, "logs", {
@@ -138,5 +131,7 @@ export const incidentService = {
     });
 
     await this.runAnalysisPipeline(id);
+
+    delete process.env.FORCE_DEMO_MODE;
   },
 };

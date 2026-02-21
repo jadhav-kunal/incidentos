@@ -17,4 +17,5 @@ export const env = {
   VAPI_API_KEY: process.env.VAPI_API_KEY || "",
 };
 
-export const isDemoMode = () => env.DEMO_MODE;
+// Change from cached value to live read
+export const isDemoMode = () => process.env.DEMO_MODE === "true";
